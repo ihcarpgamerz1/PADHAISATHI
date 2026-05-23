@@ -9,6 +9,7 @@ const PUBLIC_ROUTES = [
   "/signup",
   "/forgot-password",
   "/reset-password",
+  "/auth",
 ]
 
 // Routes that are only accessible to admins
@@ -44,12 +45,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Build a response we can attach cookie mutations to
   let response = NextResponse.next({
     request: { headers: request.headers },
   })
 
-  // Create a Supabase client that can read/write cookies via the middleware
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -73,45 +72,44 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Refresh the session — this keeps the access token alive
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // ── Unauthenticated user ────────────────────────────────────────────────────
+  // ── Unauthenticated ─────────────────────────────────────────
   if (!user) {
     if (isPublicRoute(pathname)) return response
 
-    // Redirect to login, preserving the destination for post-login redirect
     const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("redirect", pathname)
     return NextResponse.redirect(loginUrl)
   }
 
-  // ── Authenticated user — fetch profile for role + ban check ────────────────
+  // ── Fetch profile for role + ban check ──────────────────────
   const { data: profile } = await supabase
-    .from("users")
+    .from("profiles")
     .select("role, is_banned, ban_reason")
     .eq("id", user.id)
     .single()
 
-  // ── Ban check — always runs, even on public routes ─────────────────────────
+  // ── Ban check ────────────────────────────────────────────────
   if (profile?.is_banned) {
-    // Sign out the banned user so they can't keep using stored sessions
     await supabase.auth.signOut()
-
-    // Redirect to a banned page (or login with an error param)
     const bannedUrl = new URL("/login", request.url)
     bannedUrl.searchParams.set("error", "account_banned")
     return NextResponse.redirect(bannedUrl)
   }
 
-  // ── Redirect authenticated users away from auth pages ─────────────────────
-  if (isPublicRoute(pathname) && pathname !== "/" && pathname !== "/reset-password") {
+  // ── Redirect authenticated users away from auth pages ───────
+  if (
+    isPublicRoute(pathname) &&
+    pathname !== "/" &&
+    pathname !== "/reset-password"
+  ) {
     return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 
-  // ── Role-based route guards ────────────────────────────────────────────────
+  // ── Role-based guards ────────────────────────────────────────
   const role = profile?.role ?? "student"
 
   if (isAdminRoute(pathname) && role !== "admin") {
@@ -126,22 +124,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image  (image optimisation)
-     * - favicon.ico
-     */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
-}
-export default function LoginPage() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-foreground text-2xl font-heading">
-        PadhaiSathi — Login coming soon
-      </div>
-    </div>
-  )
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 }
